@@ -29,6 +29,7 @@ package bson
 
 import (
 	"fmt"
+	"github.com/idada/v8.go"
 	"math"
 	"net/url"
 	"reflect"
@@ -137,6 +138,7 @@ func (e *encoder) addMap(v reflect.Value) {
 
 func (e *encoder) addStruct(v reflect.Value) {
 	t := v.Type()
+
 	sinfo, err := getStructInfo(t)
 	if err != nil {
 		panic(err)
@@ -432,6 +434,9 @@ func (e *encoder) addElem(name string, v reflect.Value, minSize bool) {
 			e.addElemName('\x02', name)
 			e.addStr(s.String())
 
+		case v8.Value:
+			e.addV8Elem(name, &s)
+
 		case undefined:
 			e.addElemName('\x06', name)
 
@@ -497,4 +502,49 @@ func (e *encoder) addInt64(v int64) {
 
 func (e *encoder) addBytes(v ...byte) {
 	e.out = append(e.out, v...)
+}
+
+func (e *encoder) addV8Doc(value *v8.Value) {
+	start := e.reserveInt32()
+
+	switch {
+	case value.IsArray():
+		array := value.ToArray()
+		length := array.Length()
+		for i := 0; i < length; i++ {
+			e.addV8Elem(itoa(i), array.GetElement(i))
+		}
+	case value.IsObject():
+		object := value.ToObject()
+		names := object.GetOwnPropertyNames()
+		length := names.Length()
+		for i := 0; i < length; i++ {
+			name := names.GetElement(i).ToString()
+			e.addV8Elem(name, object.GetProperty(name))
+		}
+	}
+
+	e.addBytes(0)
+	e.setInt32(start, int32(len(e.out)-start))
+}
+
+func (e *encoder) addV8Elem(name string, value *v8.Value) {
+	switch {
+	case value.IsDate():
+		e.addElem(name, reflect.ValueOf(value.ToTime()), false)
+	case value.IsString():
+		e.addElem(name, reflect.ValueOf(value.ToString()), false)
+	case value.IsNumber():
+		e.addElem(name, reflect.ValueOf(value.ToNumber()), false)
+	case value.IsBoolean():
+		e.addElem(name, reflect.ValueOf(value.ToBoolean()), false)
+	case value.IsNull():
+		e.addElem(name, reflect.ValueOf(nil), false)
+	case value.IsArray():
+		e.addElemName('\x04', name)
+		e.addV8Doc(value)
+	case value.IsObject():
+		e.addElemName('\x03', name)
+		e.addV8Doc(value)
+	}
 }
